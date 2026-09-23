@@ -1,0 +1,93 @@
+name: Build and Release GUI Generic
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        env:
+          - GUI_Generic_4MB_ESP8266
+          - GUI_Generic_ESP32
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build ${{ matrix.env }}
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Copy firmware binaries
+        run: |
+          mkdir -p release
+          cp .pio/build/${{ matrix.env }}/firmware.bin release/${{ matrix.env }}.bin
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.env }}-bin
+          path: release/*.bin
+
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+
+      - name: Generate version from PlatformIO
+        run: |
+          VERSION=$(grep -m1 BUILD_VERSION platformio.ini | sed -E 's/.*BUILD_VERSION=.*"([^"]+)".*/\1/')
+          echo "VERSION=v$VERSION" >> $GITHUB_ENV
+          echo "Using version v$VERSION"
+
+      - name: List release files
+        run: ls -R release
+
+      # Release versioned
+      - name: Upload versioned release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: GUI-Generic ${{ env.VERSION }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: release/**/*.bin
+
+      # Delete latest
+      - name: Delete old latest
+        uses: dev-drprasad/delete-tag-and-release@v1.0
+        continue-on-error: true
+        with:
+          tag_name: latest
+          delete_release: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Upload latest
+      - name: Upload latest
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: GUI-Generic latest
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: release/**/*.bin

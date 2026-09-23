@@ -1,0 +1,164 @@
+Kategoria: Podstawowe
+Konfiguracja (LED, Config): Flagi -D SUPLA_CONFIG oraz -D SUPLA_LED. Aktywują wbudowany przycisk wejścia w tryb konfiguracji (192.168.4.1) oraz sygnalizację diodą statusu Wi-Fi.   
+PNG
+
+Aktualizacja przez WWW: Flaga -D SUPLA_OTA. Pozwala na zdalne wgrywanie plików .bin przez stronę konfiguracyjną bez użycia kabla.   
+PNG
+
+Dostępne GUI podczas pracy modułu: Flaga -D SUPLA_ENABLE_GUI. Strona konfiguracyjna 192.168.4.1 działa w tle również po połączeniu modułu z domowym routerem.   
+PNG
+
+Szyfrowane połączenie z serwerem (SSL): Flaga -D SUPLA_ENABLE_SSL. Podnosi bezpieczeństwo komunikacji z Supla Cloud kosztem pamięci RAM i czasu procesora.   
+PNG
+
+Tryb głębokiego uśpienia (Deep Sleep): Flaga -D SUPLA_DEEP_SLEEP. Obniża pobór prądu przez wyłączenie rdzenia (często stosowane przy zasilaniu bateryjnym).   
+PNG
+
+Wake on LAN: Flaga -D SUPLA_WAKE_ON_LAN. Moduł może wysyłać magiczne pakiety do wybudzania urządzeń sieciowych np. komputerów PC.   
+PNG
+
+WT32-ETH01 / LAN8720: Flagi -D SUPLA_WT32_ETH01 / -D SUPLA_ETH01_LAN8720. Uruchamiają obsługę wbudowanego portu RJ45 Ethernet w dedykowanych płytkach.   
+PNG
+
+Kategoria: Sterowanie
+Przekaźniki: Flaga -D SUPLA_RELAY. Fundamentalna obsługa stanów niskich/wysokich sterujących obwodami napięciowymi.   
+PNG
+
+Przyciski: Flaga -D SUPLA_BUTTON. Nasłuch fizycznych sygnałów (monostabilnych lub bistabilnych) wymuszających akcje.   
+PNG
+
+Wyzwalacze akcji: Flaga -D SUPLA_ACTION_TRIGGER. Skrypty wielokliku (np. podwójne kliknięcie zapala inne światło).   
+PNG
+
+Termostat: Flaga -D SUPLA_THERMOSTAT. Zestaw logiki PID i histerezy sterującej zaworami CO lub piecem na podstawie temperatury zadanej i odczytanej.   
+PNG
+
+Rolety: Flaga -D SUPLA_ROLLERSHUTTER. Zmienia zachowanie przekaźników z trybu "on/off" na zarządzanie otwarciem silnika rolet/żaluzji ze stanem procentowym.   
+PNG
+
+Krańcówki: Flaga -D SUPLA_LIMIT_SWITCH. Czujniki stanu granicznego (np. magnesy informujące, że brama jest maksymalnie otwarta).   
+PNG
+
+Warunkowanie: Flaga -D SUPLA_CONDITIONS. Sterowanie przekaźnikami oparte o logikę wbudowaną w moduł (zależności matematyczne "jeśli to, zrób tamto").   
+PNG
+
+Serwomechanizm :** Flaga `-D SUPLA_SERVO_CUSTOM`. Aktywuje niestandardową logikę sterowania serwami modelarskimi (180° oraz 360° obrotu ciągłego) podpiętymi pod piny PWM. Włącza zaawansowaną krzywą przyspieszenia (S-Curve) oraz generuje dedykowane okienka kalibracji na stronie 192.168.4.1.
+
+
+LED załączenia przekaźnika: Informacyjna dioda sygnalizująca stan pinu wykonawczego.   
+PNG
+
+Pushover: Flaga -D SUPLA_PUSHOVER. Pozwala na wysyłanie zewnętrznych powiadomień Push do aplikacji Pushover na telefonie.   
+PNG
+
+Linki bezpośrednie: Flaga -D SUPLA_DIRECT_LINKS. Urządzenia mogą komunikować się w sieci lokalnej (np. zliczając stany) z pominięciem serwera chmurowego.   
+PNG
+
+Bramka RF 315/433MHz: Flaga -D SUPLA_RF_BRIDGE. Zmienia moduł w nasłuchiwacz fal radiowych do integracji tanich pilotów i czujników otwarcia.   
+PNG
+
+Kategoria: Ekspandery
+MCP23017: Moduł podpinany na szynę I2C, dodający sprzętowo 16 portów wejścia/wyjścia (I/O).   
+PNG
+
+PCF8575 / PCF8574/A: Prostsze układy zwiększające piny GPIO (odpowiednio 16-bit i 8-bit), popularne w zaawansowanej automatyce rozdzielnic.   
+PNG
+
+Kategoria: 1Wire
+Sensor DS18B20: Cyfrowe termometry w wodoodpornych obudowach wpinane równolegle do jednej linii sygnałowej.   
+PNG
+
+Sensor DHT11 / DHT22: Najbardziej popularne, budżetowe czujniki do pomiaru temperatury powietrza oraz wilgotności.   
+PNG
+
+Sensor Si7021 Sonoff: Fabryczny czujnik przygotowany jako akcesorium do modułów Sonoff TH.   
+PNG
+
+Kategoria: I2C (Komunikacja magistralowa)
+Sensor BME280 / BMP280: BME280 odczytuje ciśnienie atmosferyczne, temperaturę oraz wilgotność. BMP280 realizuje ten sam pomiar bez wilgotności.   
+PNG
+
+Sensor SHT3x / SHTcx: Precyzyjne, przemysłowe czujniki temperatury i wilgotności firmy Sensirion.   
+PNG
+
+Sensor Si7021: Samodzielny moduł na magistrali I2C (dokładniejszy niż standardowe DHT).   
+PNG
+
+Sensor VL53L0X: Laserowy pomiar odległości (ToF), wykorzystywany m.in. w inteligentnych koszach na śmieci lub zbiornikach na węgiel.   
+PNG
+
+Sensor HDC1080: Energooszczędny przetwornik temperatury i wilgotności.   
+PNG
+
+Wyświetlacz OLED SSD1306, SH1106 / LCD HD44780: Moduły ekranowe używane do lokalnej, wizualnej prezentacji odczytów (np. stacji pogodowych, stanu kotła).   
+PNG
+
+Sensor BH1750 / MAX44009: Mierniki natężenia oświetlenia otoczenia podające wynik w luksach.   
+PNG
+
+Sensor MS5611: Precyzyjny układ ciśnieniomierza i termometru dedykowany aplikacjom pogodowym.   
+PNG
+
+Sensor AHT XX: Budżetowy odpowiednik czujników SHT, łączący dobrą stabilność z cyfrowym protokołem.   
+PNG
+
+Sensor SPS30: Certyfikowany laserowy miernik stężenia pyłów (Particulate Matter) używany w monitoringu smogu.   
+PNG
+
+Kategoria: SPI
+Termopara MAX6675 / MAX31855: Wzmacniacze dla termopar (np. typu K) przeznaczone do pomiarów w środowiskach skrajnych jak spalinowe piece na pellet, drukarki 3D czy wędzarnie (zakresy ponad 1000°C).   
+PNG
+
+Kategoria: Analogowe
+Pomiar analogowy (ADC Pin): Flaga -D SUPLA_ANALOG_READING_KPOP. Bezpośredni odczyt napięć do pinu ADC mikrokontrolera (0-1V na Wemosie i wyższe z użyciem dzielnika).   
+PNG
+
+Termistor NTC 10K: Flaga -D SUPLA_NTC_10K. Zwykły, rezystancyjny czujnik temperatury stosowany standardowo w budownictwie, podłogówkach czy sterownikach przemysłowych.   
+PNG
+
+Czujnik ciśnienia MPX5xxx: Flaga -D SUPLA_MPX_5XXX. Przetwornik analogowy przekształcający ciśnienie gazów na odczytywalne napięcie stałe.   
+PNG
+
+Kategoria: Licznik Energii Elektrycznej
+Licznik energii HLW8012, BL0937 / CSE7766 / ADE7953: Wbudowane chipy pomiarowe montowane na płytkach gniazdek elektrycznych takich marek jak Gosund czy Sonoff.   
+PNG
+
+Licznik energii PZEM V3: Flaga -D SUPLA_PZEM_V_3. Zamknięty, profesjonalny moduł licznika jednofazowego z przekładnikiem na przewody do 100A.   
+PNG
+
+Licznik energii SDM Modbus 1F / 3F: Flagi -D SUPLA_MODBUS_SDM_ONE_PHASE i -D SUPLA_MODBUS_SDM_72_V2. Umożliwiają komunikację RS485 z oficjalnymi certyfikowanymi licznikami aparatury elektrycznej w rozdzielni (np. modele Eastron).   
+PNG
+
+Licznik mocy INA219: Flaga -D SUPLA_INA219. Moduł do monitorowania napięć stałych (DC) i poboru prądu, idealny dla układów fotowoltaicznych, ładowarek lub akumulatorów LiPo.   
+PNG
+
+Kategoria: Inne
+RGBW, RGB, Dimmer: Flaga -D SUPLA_RGBW. Funkcje do sterowania taśmami LED oraz płynnego ściemniania światła przez wyjścia PWM.   
+PNG
+
+Czujnik odległości HC-SR04: Ultradźwiękowe piny echolokacyjne wykorzystywane do pomiaru poziomu wody w studniach czy zbiornikach.   
+PNG
+
+Licznik impulsów: Flaga -D SUPLA_IMPULSE_COUNTER. Sumator zliczający mignięcia diody lub zwarcia styku z wodomierzy czy gazomierzy, przeliczając je na konkretne zużycie medium.   
+PNG
+
+Linki bezpośrednie (odczyty): Wewnętrzne systemy przerzucania surowych danych (stare temperaturowe i nowsze dla całych kanałów) pomiędzy modułami.   
+PNG
+
+Kategoria: Czujnik czystości powietrza
+IKEA VINDRIKTNING: Flaga -D SUPLA_VINDRIKTNING_IKEA_KPOP. Integracja płyty ESP bezpośrednio ze ścieżkami komunikacyjnymi taniego miernika pyłów marki IKEA.   
+PNG
+
+PMSx003: Flaga -D SUPLA_PMSX003_KPOP. Moduł laserowy Plantower mierzący ilości pyłów PM1.0, PM2.5, PM10 w powietrzu.   
+PNG
+
+Kategoria: boneIO
+boneIO 32x10A / boneIO 24x16A: Dedykowane flagi implementujące specjalistyczną architekturę i adresację systemu boneIO (skomplikowanej płyty deweloperskiej wieloprzekaźnikowej) dla systemów inteligentnego domu budowanego w wielkich szafach sterowniczych.   
+PNG
+
+Kategoria: Debug
+Wyłączenie LittleFS: Flaga -D SUPLA_EXCLUDE_LITTLEFS_CONFIG. Omijanie rozbudowanego systemu plików w pamięci na korzyść szybszej, ograniczonej obsługi konfiguracyjnej.   
+PNG
+
+Wyłączenie wszystkich logów: Flaga -D SUPLA_DISABLE_LOGS. Zablokowanie wysyłania zbędnych komunikatów na port szeregowy po to, by zaoszczędzić wydajność procesora i nie blokować sprzętu komunikacją tekstową.   
+PNG

@@ -1,0 +1,88 @@
+name: Build Custom Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Select environment"
+        type: choice
+        default: GUI_Generic_ESP32
+        options:
+          - GUI_Generic_4MB_ESP8266
+          - GUI_Generic_ESP32
+          - GUI_Generic_ESP32C3
+          - GUI_Generic_ESP32S2
+          - GUI_Generic_ESP32S3
+
+      SUPLA_RELAY: { type: boolean, default: false }
+      SUPLA_BUTTON: { type: boolean, default: false }
+      SUPLA_ACTION_TRIGGER: { type: boolean, default: false }
+      SUPLA_LIMIT_SWITCH: { type: boolean, default: false }
+      SUPLA_ROLLERSHUTTER: { type: boolean, default: false }
+      SUPLA_DS18B20: { type: boolean, default: false }
+      SUPLA_DHT11: { type: boolean, default: false }
+      SUPLA_DHT22: { type: boolean, default: false }
+      SUPLA_SI7021_SONOFF: { type: boolean, default: false }
+      SUPLA_BME280: { type: boolean, default: false }
+      SUPLA_SHT3x: { type: boolean, default: false }
+      SUPLA_SI7021: { type: boolean, default: false }
+      SUPLA_MAX6675: { type: boolean, default: false }
+      SUPLA_HC_SR04: { type: boolean, default: false }
+      SUPLA_IMPULSE_COUNTER: { type: boolean, default: false }
+      SUPLA_OLED: { type: boolean, default: false }
+      SUPLA_HLW8012: { type: boolean, default: false }
+      SUPLA_MCP23017: { type: boolean, default: false }
+      SUPLA_RGBW: { type: boolean, default: false }
+      SUPLA_PUSHOVER: { type: boolean, default: false }
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install platformio
+
+      - name: Prepare FLAGS
+        run: |
+          FLAGS=""
+          
+          ALL_FLAGS="SUPLA_RELAY SUPLA_BUTTON SUPLA_ACTION_TRIGGER SUPLA_LIMIT_SWITCH \
+          SUPLA_ROLLERSHUTTER SUPLA_DS18B20 SUPLA_DHT11 SUPLA_DHT22 SUPLA_SI7021_SONOFF \
+          SUPLA_BME280 SUPLA_SHT3x SUPLA_SI7021 SUPLA_MAX6675 SUPLA_HC_SR04 \
+          SUPLA_IMPULSE_COUNTER SUPLA_OLED SUPLA_HLW8012 SUPLA_MCP23017 SUPLA_RGBW \
+          SUPLA_PUSHOVER"
+
+          for FLAG in $ALL_FLAGS; do
+            VAR="INPUT_${FLAG}"
+            VALUE="${!VAR}"
+            if [ "$VALUE" = "true" ]; then
+              FLAGS="$FLAGS -D $FLAG"
+            fi
+          done
+
+          echo "FLAGS=$FLAGS"
+          echo "FLAGS=$FLAGS" >> $GITHUB_ENV
+
+      - name: Build firmware
+        run: |
+          echo "Using flags: $FLAGS"
+          pio run \
+            -e ${{ inputs.environment }} \
+            --project-option="build_flags=${FLAGS}"
+
+      - name: Copy firmware
+        run: |
+          mkdir -p release
+          cp .pio/build/${{ inputs.environment }}/firmware.bin \
+             release/${{ inputs.environment }}.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: custom-${{ inputs.environment }}-${{ github.run_number }}
+          path: release/*.bin
