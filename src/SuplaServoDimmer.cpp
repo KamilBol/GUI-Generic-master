@@ -1,7 +1,5 @@
 #include "SuplaServoDimmer.h"
-
 #if defined(SUPLA_SERVO_CUSTOM)
-
 #include "SuplaConfigManager.h"
 #include "SuplaDeviceGUI.h"
 #include <Arduino.h>
@@ -17,15 +15,6 @@ extern SuplaConfigESP *ConfigESP;
 #define OFF_GPIO 255
 #endif
 
-#define B_ACTION_TURN_ON 1
-#define B_ACTION_TURN_OFF 2
-#define B_ACTION_TOGGLE 3
-#define B_ACTION_REVEAL 10
-#define B_ACTION_SHUT 11
-#define B_ACTION_STOP 12
-#define B_ACTION_OPEN 20
-#define B_ACTION_CLOSE 21
-
 SuplaServoDimmer::SuplaServoDimmer(int servoIndex) : _servoIndex(servoIndex) {
     setDefaultStateRestore();
     setFadeEffectTime(0); 
@@ -38,32 +27,74 @@ SuplaServoDimmer::SuplaServoDimmer(int servoIndex) : _servoIndex(servoIndex) {
     _currentMicroSec = 1500;
     _targetMicroSec = 1500;
     _lastWrittenMicroSec = 0;
-    _isTimeLimitedRun = false;
     _isUp = true;
-    _firstCloudSync = true; // Aktywacja pancerza restartowego
+    _firstCloudSync = true;
+    _isWaitingToDetach = false;
 
-    _type = ConfigManager->get(KEY_SERVO_TYPE)->getElement(_servoIndex).toInt();
-    _chType = ConfigManager->get(KEY_SERVO_CH_TYPE)->getElement(_servoIndex).toInt();
+    auto elType = ConfigManager->get(KEY_SERVO_TYPE);
+    _type = elType ? elType->getElement(_servoIndex).toInt() : 0;
     
+    auto elChType = ConfigManager->get(KEY_SERVO_CH_TYPE);
+    _chType = elChType ? elChType->getElement(_servoIndex).toInt() : 0;
+    
+    if (getChannel()) {
+        switch(getMode()) {
+            case MODE_RELAY:
+                getChannel()->setType(SUPLA_CHANNELTYPE_RELAY);
+                getChannel()->setDefault(SUPLA_CHANNELFNC_POWERSWITCH);
+                break;
+            case MODE_ROLLER_SHUTTER:
+                getChannel()->setType(SUPLA_CHANNELTYPE_DIMMER);
+                getChannel()->setDefault(SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER);
+                break;
+            case MODE_DIMMER:
+            default:
+                getChannel()->setType(SUPLA_CHANNELTYPE_DIMMER);
+                getChannel()->setDefault(SUPLA_CHANNELFNC_DIMMER);
+                break;
+        }
+    }
+
+    auto elInv = ConfigManager->get(KEY_SERVO_INVERTED);
+    _inverted = elInv ? (elInv->getElement(_servoIndex).toInt() == 1) : false;
+    
+    auto elMin = ConfigManager->get(KEY_SERVO_ZERO);
+    _minUs = elMin ? elMin->getElement(_servoIndex).toInt() : 500;
+    if(_minUs < 100) _minUs = 500;
+    
+    auto elMid = ConfigManager->get(KEY_SERVO_STOP_US);
+    _midUs = elMid ? elMid->getElement(_servoIndex).toInt() : 1500;
+    if(_midUs < 100) _midUs = 1500;
+    
+    auto elMax = ConfigManager->get(KEY_SERVO_MAX_ANGLE);
+    _maxUs = elMax ? elMax->getElement(_servoIndex).toInt() : 2500;
+    if(_maxUs < 100) _maxUs = 2500;
+    
+    auto elTrans = ConfigManager->get(KEY_SERVO_SPEED);
+    _transitionTimeMs = elTrans ? (unsigned long)elTrans->getElement(_servoIndex).toInt() : 500;
+    if(_transitionTimeMs == 0) _transitionTimeMs = 500;
+    
+    auto elDet = ConfigManager->get(KEY_SERVO_TIME);
+    _detachDelayMs = elDet ? (unsigned long)elDet->getElement(_servoIndex).toInt() : 0;
+    
+    auto elDb = ConfigManager->get(KEY_SERVO_SOFT_START);
+    _deadbandPercent = elDb ? elDb->getElement(_servoIndex).toInt() : 3;
+
+    auto elLUp = ConfigManager->get(KEY_SERVO_LIMIT_UP_STATE);
+    _lUpState = elLUp ? (elLUp->getElement(_servoIndex).toInt() == 1) : false;
+
+    auto elLDn = ConfigManager->get(KEY_SERVO_LIMIT_DOWN_STATE);
+    _lDownState = elLDn ? (elLDn->getElement(_servoIndex).toInt() == 1) : false;
+}
+
+ServoMode SuplaServoDimmer::getMode() const {
     if (_type == 0) { 
-        if (_chType == 2) {
-            getChannel()->setType(SUPLA_CHANNELTYPE_RELAY);
-            getChannel()->setDefault(SUPLA_CHANNELFNC_POWERSWITCH);
-        } else if (_chType == 0) {
-            getChannel()->setType(SUPLA_CHANNELTYPE_DIMMER);
-            getChannel()->setDefault(SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER);
-        } else {
-            getChannel()->setType(SUPLA_CHANNELTYPE_DIMMER);
-            getChannel()->setDefault(SUPLA_CHANNELFNC_DIMMER);
-        }
+        if (_chType == 2) return MODE_RELAY;
+        if (_chType == 0) return MODE_ROLLER_SHUTTER;
+        return MODE_DIMMER;
     } else { 
-        if (_chType == 0) {
-            getChannel()->setType(SUPLA_CHANNELTYPE_RELAY);
-            getChannel()->setDefault(SUPLA_CHANNELFNC_POWERSWITCH);
-        } else {
-            getChannel()->setType(SUPLA_CHANNELTYPE_DIMMER);
-            getChannel()->setDefault(SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER);
-        }
+        if (_chType == 0) return MODE_RELAY;
+        return MODE_ROLLER_SHUTTER;
     }
 }
 
@@ -71,322 +102,261 @@ void SuplaServoDimmer::onInit() {
     Supla::Control::DimmerBase::onInit(); 
 
     _gpio = ConfigESP->getGpio(_servoIndex, FUNCTION_SERVO);
-
-    _inverted = ConfigManager->get(KEY_SERVO_INVERTED)->getElement(_servoIndex).toInt() == 1;
-    _zero = ConfigManager->get(KEY_SERVO_ZERO)->getElement(_servoIndex).toInt();
-    _maxAngle = ConfigManager->get(KEY_SERVO_MAX_ANGLE)->getElement(_servoIndex).toInt();
-    _speed = ConfigManager->get(KEY_SERVO_SPEED)->getElement(_servoIndex).toInt();
-    _softStart = ConfigManager->get(KEY_SERVO_SOFT_START)->getElement(_servoIndex).toInt();
-    _offPWM = ConfigManager->get(KEY_SERVO_OFF_PWM)->getElement(_servoIndex).toInt() == 1;
-    
-    _stopUs = ConfigManager->get(KEY_SERVO_STOP_US)->getElement(_servoIndex).toInt();
-    _dir = ConfigManager->get(KEY_SERVO_DIR)->getElement(_servoIndex).toInt();
-    
-    _timeUpMs = (unsigned long)(ConfigManager->get(KEY_SERVO_TIME)->getElement(_servoIndex).toFloat() * 1000);
-    _timeDownMs = (unsigned long)(ConfigManager->get(KEY_SERVO_TIME_DOWN)->getElement(_servoIndex).toFloat() * 1000);
-    if (_timeUpMs == 0) _timeUpMs = 60000; 
-    if (_timeDownMs == 0) _timeDownMs = 60000;
-
-    _speedDown = ConfigManager->get(KEY_SERVO_SPEED_DOWN)->getElement(_servoIndex).toInt();
-    _overdriveMs = (unsigned long)(ConfigManager->get(KEY_SERVO_OVERDRIVE)->getElement(_servoIndex).toFloat() * 1000);
-    
     _lUpGpio = ConfigESP->getGpio(_servoIndex, FUNCTION_LIMIT_SWITCH);
-    _lUpState = ConfigManager->get(KEY_SERVO_LIMIT_UP_STATE)->getElement(_servoIndex).toInt() == 1;
     _lDownGpio = ConfigESP->getGpio(_servoIndex + 5, FUNCTION_LIMIT_SWITCH);
-    _lDownState = ConfigManager->get(KEY_SERVO_LIMIT_DOWN_STATE)->getElement(_servoIndex).toInt() == 1;
 
-    if (_lUpGpio != OFF_GPIO) {
-        bool pullUp = ConfigESP->getPullUp(_lUpGpio);
-        pinMode(_lUpGpio, pullUp ? INPUT_PULLUP : INPUT);
-    }
-    if (_lDownGpio != OFF_GPIO) {
-        bool pullUp = ConfigESP->getPullUp(_lDownGpio);
-        pinMode(_lDownGpio, pullUp ? INPUT_PULLUP : INPUT);
-    }
+    if (_lUpGpio != OFF_GPIO) pinMode(_lUpGpio, ConfigESP->getPullUp(_lUpGpio) ? INPUT_PULLUP : INPUT);
+    if (_lDownGpio != OFF_GPIO) pinMode(_lDownGpio, ConfigESP->getPullUp(_lDownGpio) ? INPUT_PULLUP : INPUT);
 
     if (_gpio != OFF_GPIO && _gpio != 0) {
+        pinMode(_gpio, OUTPUT);
+        digitalWrite(_gpio, LOW);
+
+        _currentBrightness = 0;
         if (getChannel()) {
+            // Oficjalna metoda czytania w skali 0-255
             _currentBrightness = constrain(getChannel()->getValueBrightness(), 0, 255);
         }
-        _targetBrightness = _currentBrightness;
-
-        if (_type == 0) { 
-            _currentMicroSec = calculateMicroSec180(_currentBrightness);
-            _targetMicroSec = _currentMicroSec;
-        } else { 
-            _currentMicroSec = _stopUs;
-            _targetMicroSec = _stopUs;
-        }
         
-        // ZABEZPIECZENIE (Rozwiązane szaleństwo po resecie):
-        // Całkowicie wyrzucone inicjowanie attach(). Po resecie serwo śpi martwym bykiem.
-    }
-}
+        // Zabezpieczenie dla serwa ciągłego: przy starcie ściemniacza 360 chcemy środek (127 = 50%)
+        if(_type == 1 && getMode() == MODE_DIMMER) _currentBrightness = 127;
 
-void SuplaServoDimmer::handleAction(int event, int action) {
-    if (_gpio == OFF_GPIO || _gpio == 0) return;
-
-    uint8_t parkingBrightness = map(constrain(_zero, 0, 100), 0, 100, 0, 255);
-    uint8_t activeBrightness = (_zero <= 50) ? 255 : 0;
-
-    if (action == B_ACTION_TURN_ON) {
-        setRGBWValueOnDevice(0, 0, 0, 0, activeBrightness);
-        return;
-    } else if (action == B_ACTION_TURN_OFF) {
-        setRGBWValueOnDevice(0, 0, 0, 0, parkingBrightness);
-        return;
-    } else if (action == B_ACTION_TOGGLE) {
-        if (abs((int)_currentBrightness - (int)parkingBrightness) < 5) {
-            setRGBWValueOnDevice(0, 0, 0, 0, activeBrightness);
-        } else {
-            setRGBWValueOnDevice(0, 0, 0, 0, parkingBrightness);
-        }
-        return;
-    } else if (action == B_ACTION_OPEN || action == B_ACTION_REVEAL) {
-        setRGBWValueOnDevice(0, 0, 0, 0, 255); 
-        return;
-    } else if (action == B_ACTION_CLOSE || action == B_ACTION_SHUT) {
-        setRGBWValueOnDevice(0, 0, 0, 0, 0); 
-        return;
-    } else if (action == B_ACTION_STOP) {
-        if (_isMoving && _type == 1) { 
-            unsigned long elapsed = millis() - _motorStartTimeMs;
-            if (_motorTargetDurationMs > 0) {
-                float movedRatio = (float)elapsed / (float)_motorTargetDurationMs;
-                if (movedRatio > 1.0) movedRatio = 1.0;
-                int brightnessMoved = abs((int)_targetBrightness - (int)_currentBrightness) * movedRatio;
-                if (_isUp) {
-                    _currentBrightness += brightnessMoved;
-                    if (_currentBrightness > 255) _currentBrightness = 255;
-                } else {
-                    if (_currentBrightness > (uint32_t)brightnessMoved) _currentBrightness -= brightnessMoved;
-                    else _currentBrightness = 0;
-                }
-            }
-            _servo.writeMicroseconds(_stopUs);
-            if (_offPWM) { delay(50); detachServoSafe(); }
-        }
-        _isMoving = false;
         _targetBrightness = _currentBrightness;
-        sendHardAck(_currentBrightness);
-        return;
+        _targetMicroSec = calculateMicroSec(_currentBrightness);
+        _currentMicroSec = _targetMicroSec;
+        _startMicroSec = _currentMicroSec;
     }
-
-    Supla::Control::DimmerBase::handleAction(event, action);
 }
 
-int SuplaServoDimmer::calculateMicroSec180(uint32_t brightness) {
-    uint32_t safeBrightness = constrain(brightness, 0, 255);
+int SuplaServoDimmer::calculateMicroSec(uint32_t brightness255) {
+    uint32_t safeBrightness = constrain(brightness255, 0, 255);
     if (_inverted) { safeBrightness = 255 - safeBrightness; }
+
+    if (_type == 1) { 
+        float percent = (safeBrightness / 255.0) * 100.0;
+        float dev = abs(percent - 50.0);
+        float dbHalf = _deadbandPercent / 2.0;
+
+        if (dev <= dbHalf) return _midUs; 
+
+        if (percent > 50.0) {
+            int offset = (_deadbandPercent * 255) / 200;
+            return map(safeBrightness, 128 + offset, 255, _midUs + 40, _maxUs);
+        } else {
+            int offset = (_deadbandPercent * 255) / 200;
+            return map(safeBrightness, 0, 127 - offset, _minUs, _midUs - 40);
+        }
+    } else { 
+        // Skalowanie pelne z 0-255 od chmury na zakres mikrosekund
+        return map(safeBrightness, 0, 255, _minUs, _maxUs);
+    }
+}
+
+uint32_t SuplaServoDimmer::calculateBrightnessFromMicroSec(int microSec) {
+    if (_maxUs == _minUs) return 0;
+    int minUs = _inverted ? _maxUs : _minUs;
+    int maxUs = _inverted ? _minUs : _maxUs;
+    long b = map(microSec, minUs, maxUs, 0, 255);
+    return (uint32_t)constrain(b, 0, 255);
+}
+
+void SuplaServoDimmer::sendAckToCloud(uint32_t brightness255) {
+    auto ch = getChannel();
+    if (!ch) return;
+
+    uint32_t safeBrightness = constrain(brightness255, 0, 255);
     
-    int clampedAngle = constrain(_maxAngle, 0, 180);
-    int clampedZero = constrain(_zero, 0, 100);
-    
-    // Rozkładanie na cały suwak: 1 stopień = 10us
-    long centerUs = map(clampedZero, 0, 100, 544, 2400); 
-    long minUs = constrain(centerUs - (clampedAngle * 10), 544, 2400);
-    long maxUs = constrain(centerUs + (clampedAngle * 10), 544, 2400);
-    
-    return map(safeBrightness, 0, 255, minUs, maxUs);
+    switch (getMode()) {
+        case MODE_RELAY:
+            // Czysty sygnał 1.0 (ON) lub 0.0 (OFF)
+            ch->setNewValue(safeBrightness > 0 ? 1.0 : 0.0);
+            break;
+            
+        case MODE_ROLLER_SHUTTER: {
+            // Roleta wymaga przesłania procentu otwarcia (0-100) na pierwszej pozycji (value[0])
+            double percentage = map(safeBrightness, 0, 255, 0, 100);
+            ch->setNewValue(percentage, 0.0);
+            break;
+        }
+            
+        case MODE_DIMMER:
+        default:
+            // Ściemniacz używa standardowej ramki RGBW
+            ch->setNewValue(0, 0, 0, 0, safeBrightness);
+            break;
+    }
 }
 
 void SuplaServoDimmer::detachServoSafe() {
     if (_isAttached) {
         _servo.detach();
+        digitalWrite(_gpio, LOW);
         _isAttached = false;
         _lastWrittenMicroSec = 0; 
-        SUPLA_LOG_DEBUG("[SERVO %d] PWM odciete", _servoIndex);
+        SUPLA_LOG_DEBUG("[SERVO %d] PWM Odciete", _servoIndex);
     }
 }
 
-void SuplaServoDimmer::sendHardAck(uint32_t brightness) {
-    if (getChannel()) {
-        uint8_t valueToSend = static_cast<uint8_t>(constrain(brightness, 0, 255));
-        
-        // POPRAWKA JEDNOSTEK: Ściemniacz vs Roleta (Skoki %)
-        bool isRollerShutter = (_type == 0 && _chType == 0) || (_type == 1 && _chType == 1);
-        if (isRollerShutter) {
-            valueToSend = map(brightness, 0, 255, 0, 100);
-        }
-
-        getChannel()->setNewValue(0, 0, 0, 0, valueToSend);
+void SuplaServoDimmer::forceStopAndSync(uint8_t targetBrightness255) {
+    _targetMicroSec = (_type == 1) ? _midUs : _currentMicroSec;
+    if (_isAttached) {
+        _servo.writeMicroseconds(_targetMicroSec);
     }
-}
-
-void SuplaServoDimmer::setRGBWValueOnDevice(uint32_t red, uint32_t green, uint32_t blue, uint32_t colorBrightness, uint32_t brightness) {
-    // BLOKADA: Ignorujemy pierwszy fałszywy skok wymuszony z chmury Supli przy resecie prądowym!
-    if (_firstCloudSync) {
-        _currentBrightness = constrain(brightness, 0, 255);
-        _targetMicroSec = (_type == 0) ? calculateMicroSec180(_currentBrightness) : _stopUs;
-        _currentMicroSec = _targetMicroSec;
-        _firstCloudSync = false;
-        SUPLA_LOG_DEBUG("[SERVO %d] Zsynchronizowano z chmura po resecie. Czekam w ciszy.", _servoIndex);
-        return; 
-    }
-
-    if (_gpio == OFF_GPIO || _gpio == 0) return;
     
-    uint32_t safeBrightness = constrain(brightness, 0, 255);
-    _isUp = (safeBrightness > _currentBrightness);
-    _targetBrightness = safeBrightness;
-
-    if (_type == 0) {
-        _targetMicroSec = calculateMicroSec180(_targetBrightness);
-        SUPLA_LOG_DEBUG("[SERVO %d 180] Cel: %d us. Suwak jasnosci (0-255): Z %d -> DO %d", _servoIndex, _targetMicroSec, _currentBrightness, _targetBrightness);
-    } else {
-        if (_chType == 0) {
-            _motorTargetDurationMs = _timeUpMs; 
-            _isTimeLimitedRun = (_motorTargetDurationMs > 0);
-        } else {
-            float diff = abs((int)_targetBrightness - (int)_currentBrightness);
-            float ratio = diff / 255.0;
-            if (_isUp) {
-                _motorTargetDurationMs = (unsigned long)(_timeUpMs * ratio);
-            } else {
-                _motorTargetDurationMs = (unsigned long)(_timeDownMs * ratio);
-            }
-            _isTimeLimitedRun = true;
-            SUPLA_LOG_DEBUG("[SERVO %d 360] Cel (%d%%). Czas: %ld ms", _servoIndex, (int)(ratio*100), _motorTargetDurationMs);
-        }
-    }
-
-    _motorStartTimeMs = millis();
+    _currentBrightness = targetBrightness255;
+    _targetBrightness = targetBrightness255;
+    _isMoving = false;
     
-    if (!_isAttached) {
-        _servo.writeMicroseconds(_currentMicroSec);
-        _servo.attach(_gpio);
-        _isAttached = true;
-    }
-    _isMoving = true;
+    _isWaitingToDetach = true; 
+    _targetReachedTime = millis();
     
-    sendHardAck(_targetBrightness);
+    sendAckToCloud(_currentBrightness);
 }
 
 void SuplaServoDimmer::limitSwitchCheck360() {
-    if (_lDownGpio != OFF_GPIO) {
-        bool limitTriggered = (digitalRead(_lDownGpio) == _lDownState);
-        if (limitTriggered && !_isUp) { 
-            SUPLA_LOG_DEBUG("[SERVO %d 360] KRANCOWKA DOLNA!", _servoIndex);
-            _motorTargetDurationMs = 0; 
-            _currentBrightness = 0;
-            _targetBrightness = 0;
-            detachServoSafe();
-            _isMoving = false;
-            _isTimeLimitedRun = false;
-            sendHardAck(0); 
+    if (!_isAttached || _type == 0) return;
+
+    bool hitUp = (_lUpGpio != OFF_GPIO && digitalRead(_lUpGpio) == _lUpState);
+    bool hitDown = (_lDownGpio != OFF_GPIO && digitalRead(_lDownGpio) == _lDownState);
+
+    if (hitUp && _targetMicroSec > _midUs) forceStopAndSync(255);
+    else if (hitDown && _targetMicroSec < _midUs) forceStopAndSync(0);
+}
+
+void SuplaServoDimmer::handleAction(int event, int action) {
+    if (_gpio == OFF_GPIO || _gpio == 0) return;
+
+    if (getMode() == MODE_ROLLER_SHUTTER) {
+        if (action == 12 || action == 3) { 
+            // 127 = 50% = Zatrzymanie
+            forceStopAndSync((_type == 1) ? 127 : calculateBrightnessFromMicroSec(_currentMicroSec));
             return;
         }
     }
-    if (_lUpGpio != OFF_GPIO) {
-        bool limitTriggered = (digitalRead(_lUpGpio) == _lUpState);
-        if (limitTriggered && _isUp) { 
-            SUPLA_LOG_DEBUG("[SERVO %d 360] KRANCOWKA GORNA!", _servoIndex);
-            _motorTargetDurationMs = 0; 
-            _currentBrightness = 255;
-            _targetBrightness = 255;
-            detachServoSafe();
-            _isMoving = false;
-            _isTimeLimitedRun = false;
-            sendHardAck(255); 
-            return;
+
+    if (action == 1) { if(getChannel()) getChannel()->setNewValue(0,0,0,0, 255); }
+    else if (action == 2) { if(getChannel()) getChannel()->setNewValue(0,0,0,0, (_type == 1 && getMode() != MODE_RELAY) ? 127 : 0); }
+    else if (action == 3) { if(getChannel()) getChannel()->setNewValue(0,0,0,0, (_currentBrightness > 0 && _currentBrightness != 127) ? 0 : 255); }
+    else {
+        Supla::Control::DimmerBase::handleAction(event, action);
+    }
+}
+
+void SuplaServoDimmer::setRGBWValueOnDevice(uint32_t r, uint32_t g, uint32_t b, uint32_t cb, uint32_t brightness) {
+    if (_gpio == OFF_GPIO || _gpio == 0) return;
+    
+    // Klasa DimmerBase podaje parametr 'brightness' jako 0-255. Używamy go prosto z pudełka.
+    uint32_t target255 = constrain(brightness, 0, 255);
+
+    if (_firstCloudSync) {
+        _currentBrightness = target255;
+        _targetMicroSec = calculateMicroSec(_currentBrightness);
+        _currentMicroSec = _targetMicroSec;
+        _startMicroSec = _currentMicroSec;
+        _firstCloudSync = false;
+        return; 
+    }
+    
+    _targetBrightness = target255;
+    _isUp = (_targetBrightness > _currentBrightness);
+    
+    _startMicroSec = _currentMicroSec;
+
+    switch (getMode()) {
+        case MODE_DIMMER:
+        case MODE_ROLLER_SHUTTER:
+            _targetMicroSec = calculateMicroSec(_targetBrightness);
+            break;
+
+        case MODE_RELAY:
+            if (_targetBrightness > 0) {
+                _targetMicroSec = _inverted ? _minUs : _maxUs;
+            } else {
+                _targetMicroSec = (_type == 1) ? _midUs : (_inverted ? _maxUs : _minUs);
+            }
+            break;
+    }
+
+    if (_type == 0) {
+        long deltaUs = abs(_targetMicroSec - _startMicroSec);
+        long spanUs = abs(_maxUs - _minUs);
+        _moveDurationMs = (spanUs > 0) ? (deltaUs * _transitionTimeMs) / spanUs : 0;
+    } else {
+        bool isRoller = (getMode() == MODE_ROLLER_SHUTTER);
+        if (isRoller && _targetBrightness != 127) { 
+            float ratio = abs((int)_targetBrightness - (int)_currentBrightness) / 255.0;
+            _moveDurationMs = (unsigned long)(_transitionTimeMs * ratio);
+        } else {
+            _moveDurationMs = 0; 
         }
     }
+
+    _moveStartTimeMs = millis();
+    _isMoving = true;
+    _isWaitingToDetach = false;
+
+    if (!_isAttached) {
+        _servo.attach(_gpio, _minUs, _maxUs);
+        _isAttached = true;
+    }
+    
+    sendAckToCloud(_targetBrightness);
 }
 
 void SuplaServoDimmer::iterateAlways() {
-    if (!_isMoving || !_isAttached) return;
+    if (!_isAttached) return;
 
-    unsigned long currentTime = millis();
-    if (currentTime - _lastIterateTime < 20) return; 
-    _lastIterateTime = currentTime;
+    limitSwitchCheck360();
 
-    if (_type == 0) {
-        if (_currentMicroSec == _targetMicroSec) {
-            _isMoving = false;
-            _currentBrightness = _targetBrightness;
-            sendHardAck(_currentBrightness); 
-            if (_offPWM) detachServoSafe();
-        } else {
-            int step = map(_speed, 0, 100, 1, 30); 
-            if (_softStart > 0 && abs(_currentMicroSec - _targetMicroSec) < _softStart * 10) {
-                step = (step > 1) ? step / 2 : 1; 
-            }
+    unsigned long now = millis();
+    if (now - _lastIterateTime < 20) return; 
+    _lastIterateTime = now;
+    
+    bool reached = false;
 
-            if (_currentMicroSec < _targetMicroSec) {
-                _currentMicroSec += step;
-                if (_currentMicroSec > _targetMicroSec) _currentMicroSec = _targetMicroSec; 
+    if (_isMoving) {
+        if (_type == 0) { 
+            unsigned long elapsed = now - _moveStartTimeMs;
+            if (elapsed < _moveDurationMs) {
+                _currentMicroSec = map(elapsed, 0, _moveDurationMs, _startMicroSec, _targetMicroSec);
             } else {
-                _currentMicroSec -= step;
-                if (_currentMicroSec < _targetMicroSec) _currentMicroSec = _targetMicroSec; 
-            }
-            
-            if (_currentMicroSec != _lastWrittenMicroSec) {
-                _servo.writeMicroseconds(_currentMicroSec);
-                _lastWrittenMicroSec = _currentMicroSec;
-            }
-        }
-    } else {
-        limitSwitchCheck360();
-        if (!_isMoving) return; 
-
-        unsigned long elapsed = currentTime - _motorStartTimeMs;
-        
-        if (_isTimeLimitedRun && elapsed >= (_motorTargetDurationMs + _overdriveMs)) {
-            _servo.writeMicroseconds(_stopUs);
-            _isMoving = false;
-            _currentBrightness = _targetBrightness;
-            if (_offPWM) { delay(50); detachServoSafe(); } 
-            sendHardAck(_currentBrightness); 
-            return;
-        }
-
-        // TARCIE STATYCZNE (DEADBAND) - Rozwiązanie problemu "Buczenia bez ruchu"
-        int deadband = 45; // Moc minimalna by przełamać opór przekładni
-
-        if (_chType == 0) { 
-            if (_targetBrightness > 0) {
-                int motorPwm = map(_speed, 0, 100, deadband, 500); // Wskakuje od razu na próg użyteczny
-                int outPwm = (_dir == 0) ? _stopUs - motorPwm : _stopUs + motorPwm;
-                if (outPwm != _lastWrittenMicroSec) {
-                    _servo.writeMicroseconds(outPwm);
-                    _lastWrittenMicroSec = outPwm;
-                }
-            } else {
-                _servo.writeMicroseconds(_stopUs);
-                _isMoving = false;
-                _currentBrightness = 0;
-                if (_offPWM) { delay(50); detachServoSafe(); } 
-                sendHardAck(0);
+                _currentMicroSec = _targetMicroSec;
+                reached = true;
             }
         } else { 
-            if (_targetBrightness == _currentBrightness) {
-                _servo.writeMicroseconds(_stopUs);
-                _isMoving = false;
-                if (_offPWM) { delay(50); detachServoSafe(); } 
-                return;
-            }
-            
-            int activeSpeed = _isUp ? _speed : _speedDown;
-            int motorPwm = map(activeSpeed, 0, 100, deadband, 500); // Stiction bypass
-            
-            if (_softStart > 0) {
-                unsigned long softStartMs = _softStart * 1000UL;
-                if (elapsed < softStartMs) {
-                    motorPwm = map(elapsed, 0, softStartMs, deadband, motorPwm); 
-                } else if (_isTimeLimitedRun && elapsed > _motorTargetDurationMs - softStartMs) {
-                    motorPwm = map(_motorTargetDurationMs - elapsed, 0, softStartMs, deadband, motorPwm); 
+            _currentMicroSec = _targetMicroSec;
+            bool isRoller = (getMode() == MODE_ROLLER_SHUTTER);
+            if (isRoller && _targetMicroSec != _midUs) {
+                if (now - _moveStartTimeMs >= _moveDurationMs) {
+                    forceStopAndSync(127);
+                    reached = true;
                 }
+            } else if (_targetMicroSec == _midUs) {
+                reached = true;
             }
+        }
 
-            bool driveLeft = _isUp ? (_dir == 0) : (_dir == 1);
-            int outPwm = driveLeft ? _stopUs - motorPwm : _stopUs + motorPwm;
-            
-            if (outPwm != _lastWrittenMicroSec) {
-                _servo.writeMicroseconds(outPwm);
-                _lastWrittenMicroSec = outPwm;
+        if (_currentMicroSec != _lastWrittenMicroSec) {
+            _servo.writeMicroseconds(_currentMicroSec);
+            _lastWrittenMicroSec = _currentMicroSec;
+        }
+    }
+
+    if (reached) {
+        _isMoving = false;
+        if (!_isWaitingToDetach) {
+            _targetReachedTime = now;
+            _isWaitingToDetach = true;
+        }
+    }
+
+    if (_isWaitingToDetach && _detachDelayMs > 0) {
+        if (now - _targetReachedTime >= _detachDelayMs) {
+            if (_type == 0 || (_type == 1 && _currentMicroSec == _midUs)) {
+                detachServoSafe();
             }
+            _isWaitingToDetach = false;
         }
     }
 }
-
 #endif // SUPLA_SERVO_CUSTOM
