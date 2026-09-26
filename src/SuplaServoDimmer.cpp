@@ -24,6 +24,7 @@ SuplaServoDimmer::SuplaServoDimmer(int servoIndex) : _servoIndex(servoIndex) {
     _currentBrightness = 0;
     _targetBrightness = 0;
     _lastIterateTime = 0;
+    _lastLogTime = 0;
     _currentMicroSec = 1500;
     _targetMicroSec = 1500;
     _lastWrittenMicroSec = 0;
@@ -105,20 +106,27 @@ void SuplaServoDimmer::onInit() {
     _lUpGpio = ConfigESP->getGpio(_servoIndex, FUNCTION_LIMIT_SWITCH);
     _lDownGpio = ConfigESP->getGpio(_servoIndex + 5, FUNCTION_LIMIT_SWITCH);
 
+    SUPLA_LOG_DEBUG("[SERVO_INIT %d] PIN: %d | Type: %d | Mode: %d | Min: %d | Mid: %d | Max: %d | Trans: %lu ms", 
+                    _servoIndex, _gpio, _type, getMode(), _minUs, _midUs, _maxUs, _transitionTimeMs);
+
     if (_lUpGpio != OFF_GPIO) pinMode(_lUpGpio, ConfigESP->getPullUp(_lUpGpio) ? INPUT_PULLUP : INPUT);
     if (_lDownGpio != OFF_GPIO) pinMode(_lDownGpio, ConfigESP->getPullUp(_lDownGpio) ? INPUT_PULLUP : INPUT);
 
     if (_gpio != OFF_GPIO && _gpio != 0) {
+        // Twarde zabicie systemowego PWM, aby nie gryzl sie z Servo.h
+        #ifdef ARDUINO_ARCH_ESP8266
+        analogWrite(_gpio, 0); 
+        #endif
+        
         pinMode(_gpio, OUTPUT);
         digitalWrite(_gpio, LOW);
 
         _currentBrightness = 0;
         if (getChannel()) {
-            // Oficjalna metoda czytania w skali 0-255
             _currentBrightness = constrain(getChannel()->getValueBrightness(), 0, 255);
+            SUPLA_LOG_DEBUG("[SERVO_INIT %d] Odczytano poczatkowa jasnosc z kanalu: %u", _servoIndex, _currentBrightness);
         }
         
-        // Zabezpieczenie dla serwa ciągłego: przy starcie ściemniacza 360 chcemy środek (127 = 50%)
         if(_type == 1 && getMode() == MODE_DIMMER) _currentBrightness = 127;
 
         _targetBrightness = _currentBrightness;
@@ -131,6 +139,15 @@ void SuplaServoDimmer::onInit() {
 int SuplaServoDimmer::calculateMicroSec(uint32_t brightness255) {
     uint32_t safeBrightness = constrain(brightness255, 0, 255);
     if (_inverted) { safeBrightness = 255 - safeBrightness; }
+
+    // Logika dla trybu Relay
+    if (getMode() == MODE_RELAY) {
+        if (brightness255 == 0) {
+            return (_type == 1) ? _midUs : _minUs; 
+        } else {
+            return _maxUs;
+        }
+    }
 
     if (_type == 1) { 
         float percent = (safeBrightness / 255.0) * 100.0;
@@ -147,8 +164,9 @@ int SuplaServoDimmer::calculateMicroSec(uint32_t brightness255) {
             return map(safeBrightness, 0, 127 - offset, _minUs, _midUs - 40);
         }
     } else { 
-        // Skalowanie pelne z 0-255 od chmury na zakres mikrosekund
-        return map(safeBrightness, 0, 255, _minUs, _maxUs);
+        // Zero-float matematyka 32-bitowa dla serw 180
+        uint32_t range = _maxUs - _minUs;
+        return ((safeBrightness * range) / 255) + _minUs;
     }
 }
 
@@ -165,24 +183,27 @@ void SuplaServoDimmer::sendAckToCloud(uint32_t brightness255) {
     if (!ch) return;
 
     uint32_t safeBrightness = constrain(brightness255, 0, 255);
+    SUPLA_LOG_DEBUG("[ACK_OUT %d] Wysylam status do chmury. Base val: %u", _servoIndex, safeBrightness);
     
     switch (getMode()) {
         case MODE_RELAY:
-            // Czysty sygnał 1.0 (ON) lub 0.0 (OFF)
-            ch->setNewValue(safeBrightness > 0 ? 1.0 : 0.0);
+            // GŁÓWNY FIX RELAY (UI STATUS): Kanał przekaźnika w Supli V3 operuje logicznie (Boolean).
+            // Wymuszamy RED = 1 (zamiast 255), aby serwer na value[0] odczytał poprawne "1" (ON).
+            ch->setNewValue(safeBrightness > 0 ? 1 : 0, 0, 0, 0, safeBrightness > 0 ? 255 : 0);
+            SUPLA_LOG_DEBUG("[ACK_OUT %d] Format Relay Wymuszony (value[0]=%d)", _servoIndex, safeBrightness > 0 ? 1 : 0);
             break;
             
         case MODE_ROLLER_SHUTTER: {
-            // Roleta wymaga przesłania procentu otwarcia (0-100) na pierwszej pozycji (value[0])
             double percentage = map(safeBrightness, 0, 255, 0, 100);
             ch->setNewValue(percentage, 0.0);
+            SUPLA_LOG_DEBUG("[ACK_OUT %d] Format Rolety: %.1f %%", _servoIndex, percentage);
             break;
         }
             
         case MODE_DIMMER:
         default:
-            // Ściemniacz używa standardowej ramki RGBW
             ch->setNewValue(0, 0, 0, 0, safeBrightness);
+            SUPLA_LOG_DEBUG("[ACK_OUT %d] Format Dimmer: %u", _servoIndex, safeBrightness);
             break;
     }
 }
@@ -193,11 +214,12 @@ void SuplaServoDimmer::detachServoSafe() {
         digitalWrite(_gpio, LOW);
         _isAttached = false;
         _lastWrittenMicroSec = 0; 
-        SUPLA_LOG_DEBUG("[SERVO %d] PWM Odciete", _servoIndex);
+        SUPLA_LOG_DEBUG("[SERVO %d] PWM Odciete (Detach)", _servoIndex);
     }
 }
 
 void SuplaServoDimmer::forceStopAndSync(uint8_t targetBrightness255) {
+    SUPLA_LOG_DEBUG("[FORCE_STOP %d] Wywolano zatrzymanie! Target jasnosc: %u", _servoIndex, targetBrightness255);
     _targetMicroSec = (_type == 1) ? _midUs : _currentMicroSec;
     if (_isAttached) {
         _servo.writeMicroseconds(_targetMicroSec);
@@ -224,29 +246,28 @@ void SuplaServoDimmer::limitSwitchCheck360() {
 }
 
 void SuplaServoDimmer::handleAction(int event, int action) {
+    SUPLA_LOG_DEBUG("[ACTION %d] Odebrano zdarzenie! Event: %d | Action: %d", _servoIndex, event, action);
     if (_gpio == OFF_GPIO || _gpio == 0) return;
 
     if (getMode() == MODE_ROLLER_SHUTTER) {
         if (action == 12 || action == 3) { 
-            // 127 = 50% = Zatrzymanie
             forceStopAndSync((_type == 1) ? 127 : calculateBrightnessFromMicroSec(_currentMicroSec));
             return;
         }
     }
 
-    if (action == 1) { if(getChannel()) getChannel()->setNewValue(0,0,0,0, 255); }
-    else if (action == 2) { if(getChannel()) getChannel()->setNewValue(0,0,0,0, (_type == 1 && getMode() != MODE_RELAY) ? 127 : 0); }
-    else if (action == 3) { if(getChannel()) getChannel()->setNewValue(0,0,0,0, (_currentBrightness > 0 && _currentBrightness != 127) ? 0 : 255); }
-    else {
-        Supla::Control::DimmerBase::handleAction(event, action);
-    }
+    // Pozwalamy klasie bazowej DimmerBase zająć się wszystkimi akcjami przycisków fizycznych i chmury (ON/OFF/TOGGLE). 
+    // Ona sama wywoła nasz 'setRGBWValueOnDevice' z odpowiednią wartością (1023 lub 0), a nasza matematyka zrobi resztę!
+    Supla::Control::DimmerBase::handleAction(event, action);
 }
 
 void SuplaServoDimmer::setRGBWValueOnDevice(uint32_t r, uint32_t g, uint32_t b, uint32_t cb, uint32_t brightness) {
+    SUPLA_LOG_DEBUG("[CLOUD_IN %d] Ramka wpadla z Supli! Brightness: %u (cb: %u)", _servoIndex, brightness, cb);
     if (_gpio == OFF_GPIO || _gpio == 0) return;
-    
-    // Klasa DimmerBase podaje parametr 'brightness' jako 0-255. Używamy go prosto z pudełka.
-    uint32_t target255 = constrain(brightness, 0, 255);
+
+    // GŁÓWNY FIX ARCHITEKTONICZNY: Zbijamy sprzętowe 10-bitowe wymuszenie DimmerBase (0-1023) 
+    // z powrotem na naszą twardą, ujednoliconą skalę 8-bitową (0-255).
+    uint32_t target255 = map(constrain(brightness, 0, 1023), 0, 1023, 0, 255);
 
     if (_firstCloudSync) {
         _currentBrightness = target255;
@@ -254,6 +275,7 @@ void SuplaServoDimmer::setRGBWValueOnDevice(uint32_t r, uint32_t g, uint32_t b, 
         _currentMicroSec = _targetMicroSec;
         _startMicroSec = _currentMicroSec;
         _firstCloudSync = false;
+        SUPLA_LOG_DEBUG("[CLOUD_IN %d] Pierwsza synchronizacja pominieta", _servoIndex);
         return; 
     }
     
@@ -277,6 +299,8 @@ void SuplaServoDimmer::setRGBWValueOnDevice(uint32_t r, uint32_t g, uint32_t b, 
             break;
     }
 
+    SUPLA_LOG_DEBUG("[MATH %d] Target %u -> TargetPulse: %d us (Start: %d us)", _servoIndex, _targetBrightness, _targetMicroSec, _startMicroSec);
+
     if (_type == 0) {
         long deltaUs = abs(_targetMicroSec - _startMicroSec);
         long spanUs = abs(_maxUs - _minUs);
@@ -290,6 +314,7 @@ void SuplaServoDimmer::setRGBWValueOnDevice(uint32_t r, uint32_t g, uint32_t b, 
             _moveDurationMs = 0; 
         }
     }
+    SUPLA_LOG_DEBUG("[MATH %d] Wyliczony czas ruchu: %lu ms", _servoIndex, _moveDurationMs);
 
     _moveStartTimeMs = millis();
     _isMoving = true;
@@ -298,6 +323,7 @@ void SuplaServoDimmer::setRGBWValueOnDevice(uint32_t r, uint32_t g, uint32_t b, 
     if (!_isAttached) {
         _servo.attach(_gpio, _minUs, _maxUs);
         _isAttached = true;
+        SUPLA_LOG_DEBUG("[SERVO %d] PWM Podpiete (Attach) Pin: %d", _servoIndex, _gpio);
     }
     
     sendAckToCloud(_targetBrightness);
@@ -340,11 +366,18 @@ void SuplaServoDimmer::iterateAlways() {
             _servo.writeMicroseconds(_currentMicroSec);
             _lastWrittenMicroSec = _currentMicroSec;
         }
+
+        // Telemetria: zrzucamy pozycje co 500ms
+        if (now - _lastLogTime >= 500) {
+            SUPLA_LOG_DEBUG("[MOVE %d] Pozycja: %d us | Cel: %d us", _servoIndex, _currentMicroSec, _targetMicroSec);
+            _lastLogTime = now;
+        }
     }
 
     if (reached) {
         _isMoving = false;
         if (!_isWaitingToDetach) {
+            SUPLA_LOG_DEBUG("[MOVE %d] Cel osiagniety (%d us). Rozpoczecie odliczania odciecia.", _servoIndex, _currentMicroSec);
             _targetReachedTime = now;
             _isWaitingToDetach = true;
         }

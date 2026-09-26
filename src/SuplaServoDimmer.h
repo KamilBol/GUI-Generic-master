@@ -65,6 +65,7 @@ private:
     int _startMicroSec;
     unsigned long _targetReachedTime;
     unsigned long _lastIterateTime;
+    unsigned long _lastLogTime; // Telemetria: dlawik logow
 
     ServoMode getMode() const;
     int calculateMicroSec(uint32_t brightness);
